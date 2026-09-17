@@ -399,28 +399,7 @@ uint32_t smac_os_tick_state(void)
 /// @return Current number of tasks
 uint32_t smac_os_task_count(void)
 {
-    uint32_t count        = 0;
-    TX_THREAD* thread_ptr = _tx_thread_created_ptr;
-
-    while (thread_ptr != NULL)
-    {
-        if (thread_ptr->tx_thread_id != TX_THREAD_ID)
-        {
-            count = 0;
-            break;
-        }
-
-        if ((thread_ptr->tx_thread_created_next == thread_ptr) ||
-            (thread_ptr->tx_thread_created_next == _tx_thread_created_ptr))
-        {
-            break;
-        }
-
-        count++;
-        thread_ptr = thread_ptr->tx_thread_created_next;
-    }
-
-    return count;
+    return (uint32_t)_tx_thread_created_count;
 }
 
 /// @brief Get the handle of the current task
@@ -448,7 +427,7 @@ void smac_os_delay(uint32_t ticks)
 /// @param ticks     Time increment in system ticks
 void smac_os_delay_interval(uint32_t ticks)
 {
-    smac_os_delay(ticks - smac_os_tick_state());
+    smac_os_delay(ticks);
 }
 
 /// @brief Yield the processor to another ready task
@@ -514,28 +493,11 @@ void* smac_os_malloc(uint32_t size)
 /// @param size Size of the memory to free in bytes
 void smac_os_free(void* mem, uint32_t size)
 {
+    (void)size;
+
     if (mem != NULL)
     {
-        if ((os_instance()->mem_pool[OS_MEM_POOL_1].mem != NULL) &&
-            (size <= SMAC_TX_OS_MEM_POOL_BKSZ_1))
-        {
-            smac_mem_pool_free(&os_instance()->mem_pool[OS_MEM_POOL_1].stack, mem);
-        }
-        else if ((os_instance()->mem_pool[OS_MEM_POOL_2].mem != NULL) &&
-                 (size <= SMAC_TX_OS_MEM_POOL_BKSZ_2))
-        {
-            smac_mem_pool_free(&os_instance()->mem_pool[OS_MEM_POOL_2].stack, mem);
-        }
-        else if ((os_instance()->mem_pool[OS_MEM_POOL_3].mem != NULL) &&
-                 (size <= SMAC_TX_OS_MEM_POOL_BKSZ_3))
-        {
-            smac_mem_pool_free(&os_instance()->mem_pool[OS_MEM_POOL_3].stack, mem);
-        }
-        else if ((os_instance()->mem_pool[OS_MEM_POOL_4].mem != NULL) &&
-                 (size <= SMAC_TX_OS_MEM_POOL_BKSZ_4))
-        {
-            smac_mem_pool_free(&os_instance()->mem_pool[OS_MEM_POOL_4].stack, mem);
-        }
+        smac_mem_pool_free(NULL, mem);
     }
 }
 
@@ -734,9 +696,7 @@ smacMessageQueueHandle_t smac_message_queue_create(const char* name, uint32_t me
                                                    uint32_t message_count)
 {
     TX_QUEUE* queue               = (TX_QUEUE*)_mem_alloc(sizeof(TX_QUEUE));
-    uint32_t aligned_message_size = message_size % sizeof(ULONG) == 0
-                                        ? message_size
-                                        : ((message_size / sizeof(ULONG)) + 1) * sizeof(ULONG);
+    uint32_t aligned_message_size = (message_size + sizeof(ULONG) - 1) / sizeof(ULONG);
 
     if (queue == NULL)
     {
@@ -751,8 +711,8 @@ smacMessageQueueHandle_t smac_message_queue_create(const char* name, uint32_t me
         return NULL;
     }
 
-    if (tx_queue_create(queue, (CHAR*)name, aligned_message_size / sizeof(ULONG), queue_start,
-                        message_count) != TX_SUCCESS)
+    if (tx_queue_create(queue, (CHAR*)name, aligned_message_size, queue_start, message_count) !=
+        TX_SUCCESS)
     {
         _mem_free((uint8_t*)queue);
         _mem_free((uint8_t*)queue_start);
@@ -774,15 +734,22 @@ smacMessageQueueHandle_t smac_message_queue_create_static(const char* name, uint
                                                           uint32_t message_size,
                                                           uint32_t message_count)
 {
-    TX_QUEUE* queue = (TX_QUEUE*)_mem_alloc(sizeof(TX_QUEUE));
+    if ((message_buffer == NULL) || (message_size == 0) || (message_count == 0) ||
+        (message_size % sizeof(ULONG) != 0))
+    {
+        return NULL;
+    }
+
+    TX_QUEUE* queue               = (TX_QUEUE*)_mem_alloc(sizeof(TX_QUEUE));
+    uint32_t aligned_message_size = (message_size + sizeof(ULONG) - 1) / sizeof(ULONG);
 
     if (queue == NULL)
     {
         return NULL;
     }
 
-    if (tx_queue_create(queue, (CHAR*)name, message_size, (VOID*)message_buffer, message_count) !=
-        TX_SUCCESS)
+    if (tx_queue_create(queue, (CHAR*)name, aligned_message_size, (VOID*)message_buffer,
+                        message_count) != TX_SUCCESS)
     {
         _mem_free((uint8_t*)queue);
         return NULL;
@@ -798,9 +765,9 @@ void smac_message_queue_delete(smacMessageQueueHandle_t queue)
 {
     if (queue != NULL)
     {
+        _mem_free((uint8_t*)((TX_QUEUE*)queue)->tx_queue_start);
         tx_queue_delete((TX_QUEUE*)queue);
         _mem_free((uint8_t*)queue);
-        _mem_free((uint8_t*)((TX_QUEUE*)queue)->tx_queue_start);
     }
 }
 
@@ -1000,13 +967,11 @@ smacMemPoolHandle_t smac_mem_pool_create_static(const char* name, void* pool, ui
 /// @param pool Handle to the memory pool to be deleted
 void smac_mem_pool_delete(smacMemPoolHandle_t pool)
 {
-    VOID* pool_zone = ((TX_BLOCK_POOL*)pool)->tx_block_pool_start;
-
     if ((pool != NULL) && (((TX_BLOCK_POOL*)pool)->tx_block_pool_id != TX_BLOCK_POOL_ID))
     {
+        _mem_free((uint8_t*)((TX_BLOCK_POOL*)pool)->tx_block_pool_start);
         tx_block_pool_delete((TX_BLOCK_POOL*)pool);
         _mem_free((uint8_t*)pool);
-        _mem_free((uint8_t*)pool_zone);
     }
 }
 
@@ -1110,10 +1075,7 @@ void* smac_mem_pool_alloc(smacMemPoolHandle_t pool, uint32_t timeout)
 /// @param block Pointer to the memory block to be freed
 void smac_mem_pool_free(smacMemPoolHandle_t pool, void* block)
 {
-    TX_BLOCK_POOL* xpool = (TX_BLOCK_POOL*)pool;
-
-    assert(xpool != NULL);
-    assert(xpool->tx_block_pool_id == TX_BLOCK_POOL_ID);
+    (void)pool;
 
     if (block != NULL)
     {
@@ -1334,7 +1296,8 @@ smacTaskHandle_t smac_task_create(const char* name, void (*main)(void*), void* a
     assert(main != NULL);
     assert(stack_size >= TX_MINIMUM_STACK);
 
-    TX_THREAD* thread = (TX_THREAD*)_mem_alloc(sizeof(TX_THREAD));
+    TX_THREAD* thread           = (TX_THREAD*)_mem_alloc(sizeof(TX_THREAD));
+    uint32_t aligned_stack_size = (stack_size + sizeof(ULONG) - 1) / sizeof(ULONG);
 
     if (thread == NULL)
     {
@@ -1351,9 +1314,9 @@ smacTaskHandle_t smac_task_create(const char* name, void (*main)(void*), void* a
 
     UINT converted_priority = (UINT)(SMAC_TASK_PRIORITY_MAX - priority);
 
-    if (tx_thread_create(thread, (CHAR*)name, (void (*)(ULONG))main, (ULONG)arg, stack, stack_size,
-                         (UINT)converted_priority, converted_priority, OS_DEFAULT_TIME_SLICE,
-                         TX_AUTO_START) != TX_SUCCESS)
+    if (tx_thread_create(thread, (CHAR*)name, (void (*)(ULONG))main, (ULONG)arg, stack,
+                         aligned_stack_size, (UINT)converted_priority, converted_priority,
+                         OS_DEFAULT_TIME_SLICE, TX_AUTO_START) != TX_SUCCESS)
     {
         _mem_free((uint8_t*)stack);
         _mem_free((uint8_t*)thread);
@@ -1381,7 +1344,13 @@ smacTaskHandle_t smac_task_create_static(const char* name, void (*main)(void*), 
     assert(stack != NULL);
     assert(stack_size >= TX_MINIMUM_STACK);
 
-    TX_THREAD* thread = (TX_THREAD*)_mem_alloc(sizeof(TX_THREAD));
+    if (stack_size % sizeof(ULONG) != 0)
+    {
+        return NULL;
+    }
+
+    TX_THREAD* thread           = (TX_THREAD*)_mem_alloc(sizeof(TX_THREAD));
+    uint32_t aligned_stack_size = (stack_size + sizeof(ULONG) - 1) / sizeof(ULONG);
 
     if (thread == NULL)
     {
@@ -1391,7 +1360,7 @@ smacTaskHandle_t smac_task_create_static(const char* name, void (*main)(void*), 
     UINT converted_priority = (UINT)(SMAC_TASK_PRIORITY_MAX - priority);
 
     if (tx_thread_create(thread, (CHAR*)name, (void (*)(ULONG))main, (ULONG)arg, (VOID*)stack,
-                         stack_size, (UINT)converted_priority, converted_priority,
+                         aligned_stack_size, (UINT)converted_priority, converted_priority,
                          OS_DEFAULT_TIME_SLICE, TX_AUTO_START) != TX_SUCCESS)
     {
         _mem_free((uint8_t*)thread);
@@ -1406,14 +1375,12 @@ smacTaskHandle_t smac_task_create_static(const char* name, void (*main)(void*), 
 /// @param task Handle to the task to be deleted
 void smac_task_delete(smacTaskHandle_t task)
 {
-    VOID* stack = ((TX_THREAD*)task)->tx_thread_stack_start;
-
     if ((task != NULL) && (((TX_THREAD*)task)->tx_thread_id == TX_THREAD_ID))
     {
         if (tx_thread_terminate((TX_THREAD*)task) == TX_SUCCESS)
         {
+            _mem_free((uint8_t*)((TX_THREAD*)task)->tx_thread_stack_start);
             tx_thread_delete((TX_THREAD*)task);
-            _mem_free((uint8_t*)stack);
             _mem_free((uint8_t*)task);
         }
     }
