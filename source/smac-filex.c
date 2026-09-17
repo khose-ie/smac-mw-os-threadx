@@ -1,7 +1,9 @@
 
+#include <assert.h>
 #include <fx_api.h>
 #include <smac-filex.h>
 #include <smac-media.h>
+#include <smac-os.h>
 #include <tx_byte_pool.h>
 
 #ifdef __cplusplus
@@ -20,10 +22,7 @@ extern "C" {
 #define SMAC_FX_MAX_OPEN_ENTITIES (8)
 #endif // SMAC_FX_MAX_OPEN_ENTITIES
 
-/* Forward declaration for FileX internal partition helper (not exposed in fx_api.h).
-    Declared here to avoid implicit function declaration errors when calling it. */
-UINT _fx_partition_offset_calculate(void* partition_sector, UINT partition, ULONG* partition_start,
-                                    ULONG* partition_size);
+#define MEDIA_MUTEX_OVERTIME (500)
 
 #define MEDIA_COUNT (SMAC_FX_MEDIA_COUNT)
 
@@ -142,6 +141,11 @@ EXT1 uint8_t FILEX_STACK_MEM[FILEX_STACK_MEM_SIZE];
 ///          allocated from the FS stack memory.
 static filexStack_t* _filex = (filexStack_t*)FILEX_STACK_MEM;
 
+/* Forward declaration for FileX internal partition helper (not exposed in fx_api.h).
+    Declared here to avoid implicit function declaration errors when calling it. */
+UINT _fx_partition_offset_calculate(void* partition_sector, UINT partition, ULONG* partition_start,
+                                    ULONG* partition_size);
+
 /// @brief Allocate a memory block for media operations
 /// @details This function allocates a memory block for media operations
 ///          from the media stack block pool.
@@ -178,7 +182,7 @@ static smacRetCode_t mutex_lock(TX_MUTEX* mutex)
 {
 #ifndef SINGLE_THREAD
 
-    if (tx_mutex_get(mutex, 500) != TX_SUCCESS)
+    if (tx_mutex_get(mutex, MEDIA_MUTEX_OVERTIME) != TX_SUCCESS)
     {
         return SMAC_RET_OS_MUTEX_ERR;
     }
@@ -420,10 +424,7 @@ static smacRetCode_t check_fs_feasibility(const smacMediaState_t* state,
 /// @return SMAC_RET_OK on success, error code otherwise
 smacRetCode_t smac_media_initialize(void)
 {
-    if (FILEX_STACK_MEM_SIZE < FILEX_STACK_MEM_REQUIRED_SIZE)
-    {
-        return SMAC_RET_STACK_OVERFLOW;
-    }
+    assert(FILEX_STACK_MEM_SIZE >= FILEX_STACK_MEM_REQUIRED_SIZE);
 
     memset(_filex, 0, sizeof(*_filex));
 
@@ -446,17 +447,16 @@ smacRetCode_t smac_media_initialize(void)
 /// @return SMAC_RET_OK on success, error code otherwise
 smacRetCode_t smac_media_set_diskio(uint32_t disk_num, const smacMediaDiskIO_t* diskio)
 {
-    if (disk_num >= MEDIA_COUNT || diskio == NULL)
-    {
-        return SMAC_RET_PARAM_ERR;
-    }
-
-    if (diskio->read == NULL || diskio->write == NULL || diskio->flush == NULL ||
-        diskio->trim == NULL || diskio->status == NULL || diskio->sector_count == NULL ||
-        diskio->sector_size == NULL || diskio->block_size == NULL)
-    {
-        return SMAC_RET_PARAM_ERR;
-    }
+    assert(disk_num < MEDIA_COUNT);
+    assert(diskio != NULL);
+    assert(diskio->read != NULL);
+    assert(diskio->write != NULL);
+    assert(diskio->flush != NULL);
+    assert(diskio->trim != NULL);
+    assert(diskio->status != NULL);
+    assert(diskio->sector_count != NULL);
+    assert(diskio->sector_size != NULL);
+    assert(diskio->block_size != NULL);
 
     if (_filex->media[disk_num].diskio.status != NULL)
     {
@@ -477,6 +477,8 @@ smacRetCode_t smac_media_set_diskio(uint32_t disk_num, const smacMediaDiskIO_t* 
 smacRetCode_t smac_media_format(const char* name, uint32_t disk_num, const smacMediaState_t* info)
 {
     filexMediaStack_t* media = &_filex->media[disk_num];
+
+    assert(disk_num < MEDIA_COUNT);
 
     if (media->diskio.status == NULL)
     {
@@ -510,6 +512,8 @@ smacMediaHandle_t smac_media_mount(const char* name, uint32_t disk_num)
 {
     filexMediaStack_t* media = &_filex->media[disk_num];
 
+    assert(disk_num < MEDIA_COUNT);
+
     memset(&media->media, 0, sizeof(media->media));
     memset(&media->mutex, 0, sizeof(media->mutex));
     memset(media->workspace, 0, MEDIA_WORK_SIZE);
@@ -536,8 +540,11 @@ void smac_media_unmount(smacMediaHandle_t media)
 {
     filexMediaStack_t* xmedia = (filexMediaStack_t*)media;
 
-    fx_media_close(&xmedia->media);
-    tx_mutex_delete(&xmedia->mutex);
+    if (xmedia != NULL)
+    {
+        fx_media_close(&xmedia->media);
+        tx_mutex_delete(&xmedia->mutex);
+    }
 }
 
 /// @brief Get the name of the file system
@@ -547,6 +554,10 @@ void smac_media_unmount(smacMediaHandle_t media)
 const char* smac_media_name(smacMediaHandle_t media)
 {
     filexMediaStack_t* xmedia = (filexMediaStack_t*)media;
+
+    assert(xmedia != NULL);
+    assert(xmedia->media.fx_media_id == FX_MEDIA_ID);
+
     return (const char*)xmedia->media.fx_media_name;
 }
 
@@ -558,6 +569,9 @@ const char* smac_media_name(smacMediaHandle_t media)
 smacRetCode_t smac_media_sync(smacMediaHandle_t media)
 {
     filexMediaStack_t* xmedia = (filexMediaStack_t*)media;
+
+    assert(xmedia != NULL);
+    assert(xmedia->media.fx_media_id == FX_MEDIA_ID);
 
     if (mutex_lock(&xmedia->mutex) != SMAC_RET_OK)
     {
@@ -585,6 +599,10 @@ smacRetCode_t smac_media_create_file(smacMediaHandle_t media, const char* path)
 {
     filexMediaStack_t* xmedia = (filexMediaStack_t*)media;
 
+    assert(xmedia != NULL);
+    assert(xmedia->media.fx_media_id == FX_MEDIA_ID);
+    assert(path != NULL);
+
     if (mutex_lock(&xmedia->mutex) != SMAC_RET_OK)
     {
         return SMAC_RET_OS_MUTEX_ERR;
@@ -608,6 +626,10 @@ smacRetCode_t smac_media_create_file(smacMediaHandle_t media, const char* path)
 smacRetCode_t smac_media_remove_file(smacMediaHandle_t media, const char* path)
 {
     filexMediaStack_t* xmedia = (filexMediaStack_t*)media;
+
+    assert(xmedia != NULL);
+    assert(xmedia->media.fx_media_id == FX_MEDIA_ID);
+    assert(path != NULL);
 
     if (mutex_lock(&xmedia->mutex) != SMAC_RET_OK)
     {
@@ -635,6 +657,10 @@ smacRetCode_t smac_media_create_dir(smacMediaHandle_t media, const char* path)
 {
     filexMediaStack_t* xmedia = (filexMediaStack_t*)media;
 
+    assert(xmedia != NULL);
+    assert(xmedia->media.fx_media_id == FX_MEDIA_ID);
+    assert(path != NULL);
+
     if (mutex_lock(&xmedia->mutex) != SMAC_RET_OK)
     {
         return SMAC_RET_OS_MUTEX_ERR;
@@ -660,6 +686,10 @@ smacRetCode_t smac_media_remove_dir(smacMediaHandle_t media, const char* path)
 {
     filexMediaStack_t* xmedia = (filexMediaStack_t*)media;
 
+    assert(xmedia != NULL);
+    assert(xmedia->media.fx_media_id == FX_MEDIA_ID);
+    assert(path != NULL);
+
     if (mutex_lock(&xmedia->mutex) != SMAC_RET_OK)
     {
         return SMAC_RET_OS_MUTEX_ERR;
@@ -684,10 +714,17 @@ smacRetCode_t smac_media_remove_dir(smacMediaHandle_t media, const char* path)
 /// @param old_path  Current path of the file or directory
 /// @param new_path  New path of the file or directory
 /// @return SMAC_RET_OK on success, error code otherwise
-smacRetCode_t smac_media_entity_move(smacMediaHandle_t media, const char* old_path, const char* new_path)
+smacRetCode_t smac_media_entity_move(smacMediaHandle_t media, const char* old_path,
+                                     const char* new_path)
 {
     filexMediaStack_t* xmedia = (filexMediaStack_t*)media;
-    UINT dir_test_value       = fx_directory_name_test(&xmedia->media, (CHAR*)old_path);
+
+    assert(xmedia != NULL);
+    assert(xmedia->media.fx_media_id == FX_MEDIA_ID);
+    assert(old_path != NULL);
+    assert(new_path != NULL);
+
+    UINT dir_test_value = fx_directory_name_test(&xmedia->media, (CHAR*)old_path);
 
     if (mutex_lock(&xmedia->mutex) != SMAC_RET_OK)
     {
@@ -728,14 +765,14 @@ smacRetCode_t smac_media_entity_move(smacMediaHandle_t media, const char* old_pa
 /// @param state Pointer to a mediaEntityState_t structure to receive the state information
 /// @return SMAC_RET_OK on success, error code otherwise
 smacRetCode_t smac_media_entity_state(smacMediaHandle_t media, const char* path,
-                                 smacMediaEntityState_t* state)
+                                      smacMediaEntityState_t* state)
 {
     filexMediaStack_t* xmedia = (filexMediaStack_t*)media;
 
-    if (state == NULL)
-    {
-        return SMAC_RET_PARAM_ERR;
-    }
+    assert(xmedia != NULL);
+    assert(xmedia->media.fx_media_id == FX_MEDIA_ID);
+    assert(path != NULL);
+    assert(state != NULL);
 
     if (mutex_lock(&xmedia->mutex) != SMAC_RET_OK)
     {
@@ -768,11 +805,16 @@ smacRetCode_t smac_media_entity_state(smacMediaHandle_t media, const char* path,
 /// @param path  Path of the file to open
 /// @param mode  File open mode mask of type smacFileOpenModeMask_t
 /// @return Handle to the opened file, or NULL on failure
-smacFileHandle_t smac_media_file_open(smacMediaHandle_t media, const char* path, smacFileOpenModeMask_t mode)
+smacFileHandle_t smac_media_file_open(smacMediaHandle_t media, const char* path,
+                                      smacFileOpenModeMask_t mode)
 {
     FX_FILE* file;
     uint32_t fx_mode          = 0;
     filexMediaStack_t* xmedia = (filexMediaStack_t*)media;
+
+    assert(xmedia != NULL);
+    assert(xmedia->media.fx_media_id == FX_MEDIA_ID);
+    assert(path != NULL);
 
     if (mode & MEDIA_FILE_READ)
     {
@@ -824,10 +866,11 @@ smacFileHandle_t smac_media_file_open(smacMediaHandle_t media, const char* path,
 /// @param file Handle to the file to be closed
 void smac_media_file_close(smacFileHandle_t file)
 {
-    FX_FILE* fx_file = (FX_FILE*)file;
-
-    fx_file_close(fx_file);
-    mem_block_free((uint8_t*)fx_file);
+    if (file != NULL)
+    {
+        fx_file_close((FX_FILE*)file);
+        mem_block_free((uint8_t*)file);
+    }
 }
 
 /// @brief Read data from a file
@@ -838,11 +881,16 @@ void smac_media_file_close(smacFileHandle_t file)
 /// @param read_size Pointer to a variable to receive the number of bytes actually read
 /// @return SMAC_RET_OK on success, error code otherwise
 smacRetCode_t smac_media_file_read(smacFileHandle_t file, void* buffer, uint32_t size,
-                              uint32_t* read_size)
+                                   uint32_t* read_size)
 {
-    FX_FILE* fx_file = (FX_FILE*)file;
+    FX_FILE* xfile = (FX_FILE*)file;
 
-    if (fx_file_read(fx_file, buffer, size, read_size) != FX_SUCCESS)
+    assert(xfile != NULL);
+    assert(xfile->fx_file_id == FX_FILE_ID);
+    assert(buffer != NULL);
+    assert(read_size != NULL);
+
+    if (fx_file_read(xfile, buffer, size, read_size) != FX_SUCCESS)
     {
         return SMAC_RET_LOW_LEVEL_FAILURE;
     }
@@ -858,11 +906,16 @@ smacRetCode_t smac_media_file_read(smacFileHandle_t file, void* buffer, uint32_t
 /// @param written_size Pointer to a variable to receive the number of bytes actually written
 /// @return SMAC_RET_OK on success, error code otherwise
 smacRetCode_t smac_media_file_write(smacFileHandle_t file, const void* buffer, uint32_t size,
-                               uint32_t* written_size)
+                                    uint32_t* written_size)
 {
-    FX_FILE* fx_file = (FX_FILE*)file;
+    FX_FILE* xfile = (FX_FILE*)file;
 
-    if (fx_file_write(fx_file, (VOID*)buffer, size) != FX_SUCCESS)
+    assert(xfile != NULL);
+    assert(xfile->fx_file_id == FX_FILE_ID);
+    assert(buffer != NULL);
+    assert(written_size != NULL);
+
+    if (fx_file_write(xfile, (VOID*)buffer, size) != FX_SUCCESS)
     {
         return SMAC_RET_LOW_LEVEL_FAILURE;
     }
@@ -883,14 +936,17 @@ smacRetCode_t smac_media_file_write(smacFileHandle_t file, const void* buffer, u
 /// @note The offset must be within the range of a 32-bit unsigned integer due to FileX limitations.
 smacRetCode_t smac_media_file_seek(smacFileHandle_t file, uint64_t offset)
 {
-    FX_FILE* fx_file = (FX_FILE*)file;
+    FX_FILE* xfile = (FX_FILE*)file;
+
+    assert(xfile != NULL);
+    assert(xfile->fx_file_id == FX_FILE_ID);
 
     if (offset > UINT32_MAX)
     {
         return SMAC_RET_PARAM_ERR;
     }
 
-    if (fx_file_seek(fx_file, offset) != FX_SUCCESS)
+    if (fx_file_seek(xfile, offset) != FX_SUCCESS)
     {
         return SMAC_RET_LOW_LEVEL_FAILURE;
     }
@@ -908,16 +964,19 @@ smacRetCode_t smac_media_file_seek(smacFileHandle_t file, uint64_t offset)
 ///       due to FileX limitations.
 smacRetCode_t smac_media_file_seek_from_current(smacFileHandle_t file, uint64_t offset)
 {
-    FX_FILE* fx_file      = (FX_FILE*)file;
-    uint64_t new_position = fx_file->fx_file_current_file_offset + offset;
+    FX_FILE* xfile        = (FX_FILE*)file;
+    uint64_t new_position = xfile->fx_file_current_file_offset + offset;
 
-    if ((fx_file->fx_file_current_file_offset >= UINT32_MAX) || (offset > UINT32_MAX) ||
+    assert(xfile != NULL);
+    assert(xfile->fx_file_id == FX_FILE_ID);
+
+    if ((xfile->fx_file_current_file_offset >= UINT32_MAX) || (offset > UINT32_MAX) ||
         (new_position > UINT32_MAX))
     {
         return SMAC_RET_PARAM_ERR;
     }
 
-    if (fx_file_seek(fx_file, (uint32_t)new_position) != FX_SUCCESS)
+    if (fx_file_seek(xfile, (uint32_t)new_position) != FX_SUCCESS)
     {
         return SMAC_RET_LOW_LEVEL_FAILURE;
     }
@@ -930,8 +989,12 @@ smacRetCode_t smac_media_file_seek_from_current(smacFileHandle_t file, uint64_t 
 /// @return Current position in bytes from the beginning of the file
 uint32_t smac_media_file_tell(smacFileHandle_t file)
 {
-    FX_FILE* fx_file = (FX_FILE*)file;
-    return fx_file->fx_file_current_file_offset;
+    FX_FILE* xfile = (FX_FILE*)file;
+
+    assert(xfile != NULL);
+    assert(xfile->fx_file_id == FX_FILE_ID);
+
+    return xfile->fx_file_current_file_offset;
 }
 
 /// @brief Get the size of a file
@@ -940,8 +1003,12 @@ uint32_t smac_media_file_tell(smacFileHandle_t file)
 /// @return Size of the file in bytes
 uint32_t smac_media_file_size(smacFileHandle_t file)
 {
-    FX_FILE* fx_file = (FX_FILE*)file;
-    return fx_file->fx_file_current_file_size;
+    FX_FILE* xfile = (FX_FILE*)file;
+
+    assert(xfile != NULL);
+    assert(xfile->fx_file_id == FX_FILE_ID);
+
+    return xfile->fx_file_current_file_size;
 }
 
 /// @brief Truncate a file to the current position
@@ -950,9 +1017,12 @@ uint32_t smac_media_file_size(smacFileHandle_t file)
 /// @return SMAC_RET_OK on success, error code otherwise
 smacRetCode_t smac_media_file_truncate(smacFileHandle_t file)
 {
-    FX_FILE* fx_file = (FX_FILE*)file;
+    FX_FILE* xfile = (FX_FILE*)file;
 
-    if (fx_file_truncate(fx_file, fx_file->fx_file_current_file_offset) != FX_SUCCESS)
+    assert(xfile != NULL);
+    assert(xfile->fx_file_id == FX_FILE_ID);
+
+    if (fx_file_truncate(xfile, xfile->fx_file_current_file_offset) != FX_SUCCESS)
     {
         return SMAC_RET_LOW_LEVEL_FAILURE;
     }
@@ -967,11 +1037,14 @@ smacRetCode_t smac_media_file_truncate(smacFileHandle_t file)
 /// @return SMAC_RET_OK on success, error code otherwise
 smacRetCode_t smac_media_file_sync(smacFileHandle_t file)
 {
-    FX_FILE* fx_file = (FX_FILE*)file;
+    FX_FILE* xfile = (FX_FILE*)file;
+
+    assert(xfile != NULL);
+    assert(xfile->fx_file_id == FX_FILE_ID);
 
     /* FileX does not expose a file-level flush in the public API; flush the
        underlying media instead. This ensures data is written to the device. */
-    if (fx_media_flush(fx_file->fx_file_media_ptr) != FX_SUCCESS)
+    if (fx_media_flush(xfile->fx_file_media_ptr) != FX_SUCCESS)
     {
         return SMAC_RET_LOW_LEVEL_FAILURE;
     }
@@ -992,6 +1065,10 @@ smacDirectoryHandle_t smac_media_dir_open(smacMediaHandle_t media, const char* p
 {
     filexDir_t* dir;
     filexMediaStack_t* xmedia = (filexMediaStack_t*)media;
+
+    assert(xmedia != NULL);
+    assert(xmedia->media.fx_media_id == FX_MEDIA_ID);
+    assert(path != NULL);
 
     if (mutex_lock(&xmedia->mutex) != SMAC_RET_OK)
     {
@@ -1021,7 +1098,10 @@ smacDirectoryHandle_t smac_media_dir_open(smacMediaHandle_t media, const char* p
 /// @param dir Handle to the directory to be closed (smacDirectoryHandle_t)
 void smac_media_dir_close(smacDirectoryHandle_t dir)
 {
-    mem_block_free((uint8_t*)dir);
+    if (dir != NULL)
+    {
+        mem_block_free((uint8_t*)dir);
+    }
 }
 
 /// @brief Get the next item in a directory
@@ -1029,74 +1109,81 @@ void smac_media_dir_close(smacDirectoryHandle_t dir)
 /// @param dir   Handle to the directory (smacDirectoryHandle_t)
 /// @param state Pointer to a smacMediaEntityState_t structure to receive the item information
 /// @return SMAC_RET_OK on success, error code otherwise
-smacRetCode_t smac_media_dir_next_item_state(smacDirectoryHandle_t dir, smacMediaEntityState_t* state)
+smacRetCode_t smac_media_dir_next_item_state(smacDirectoryHandle_t dir,
+                                             smacMediaEntityState_t* state)
 {
     CHAR* default_name;
     CHAR name[FX_MAX_LONG_NAME_LEN];
-    filexDir_t* fx_dir = (filexDir_t*)dir;
+    filexDir_t* xdir = (filexDir_t*)dir;
 
-    if (mutex_lock(&fx_dir->media->mutex) != SMAC_RET_OK)
+    assert(xdir != NULL);
+    assert(xdir->media != NULL);
+    assert(xdir->media->media.fx_media_id == FX_MEDIA_ID);
+    assert(xdir->path != NULL);
+    assert(state != NULL);
+
+    if (mutex_lock(&xdir->media->mutex) != SMAC_RET_OK)
     {
         return SMAC_RET_OS_MUTEX_ERR;
     }
 
-    if (fx_dir->entry_index == 0)
+    if (xdir->entry_index == 0)
     {
-        if (fx_directory_default_set(&fx_dir->media->media, (CHAR*)fx_dir->path) != FX_SUCCESS)
+        if (fx_directory_default_set(&xdir->media->media, (CHAR*)xdir->path) != FX_SUCCESS)
         {
-            mutex_unlock(&fx_dir->media->mutex);
+            mutex_unlock(&xdir->media->mutex);
             return SMAC_RET_LOW_LEVEL_FAILURE;
         }
 
         if (fx_directory_first_full_entry_find(
-                &fx_dir->media->media, name, (UINT*)&state->attributes, (ULONG*)&state->size,
+                &xdir->media->media, name, (UINT*)&state->attributes, (ULONG*)&state->size,
                 (UINT*)&state->time_stamp.year, (UINT*)&state->time_stamp.month,
                 (UINT*)&state->time_stamp.day, (UINT*)&state->time_stamp.hour,
                 (UINT*)&state->time_stamp.minute, (UINT*)&state->time_stamp.second) != FX_SUCCESS)
         {
-            mutex_unlock(&fx_dir->media->mutex);
+            mutex_unlock(&xdir->media->mutex);
             return SMAC_RET_LOW_LEVEL_FAILURE;
         }
 
         state->kind = (state->attributes & FX_DIRECTORY) ? MEDIA_ENTITY_DIR : MEDIA_ENTITY_FILE;
 
-        fx_dir->entry_index = fx_dir->media->media.fx_media_directory_next_full_entry_finds;
-        mutex_unlock(&fx_dir->media->mutex);
+        xdir->entry_index = xdir->media->media.fx_media_directory_next_full_entry_finds;
+        mutex_unlock(&xdir->media->mutex);
 
         return SMAC_RET_OK;
     }
 
-    if (fx_directory_default_get(&fx_dir->media->media, &default_name) != FX_SUCCESS)
+    if (fx_directory_default_get(&xdir->media->media, &default_name) != FX_SUCCESS)
     {
-        mutex_unlock(&fx_dir->media->mutex);
+        mutex_unlock(&xdir->media->mutex);
         return SMAC_RET_LOW_LEVEL_FAILURE;
     }
 
-    if (strncmp(fx_dir->path, default_name, FX_MAX_LONG_NAME_LEN) != 0)
+    if (strncmp(xdir->path, default_name, FX_MAX_LONG_NAME_LEN) != 0)
     {
-        if (fx_directory_default_set(&fx_dir->media->media, (CHAR*)fx_dir->path) != FX_SUCCESS)
+        if (fx_directory_default_set(&xdir->media->media, (CHAR*)xdir->path) != FX_SUCCESS)
         {
-            mutex_unlock(&fx_dir->media->mutex);
+            mutex_unlock(&xdir->media->mutex);
             return SMAC_RET_LOW_LEVEL_FAILURE;
         }
 
-        fx_dir->media->media.fx_media_directory_next_full_entry_finds = fx_dir->entry_index;
+        xdir->media->media.fx_media_directory_next_full_entry_finds = xdir->entry_index;
     }
 
     if (fx_directory_next_full_entry_find(
-            &fx_dir->media->media, name, (UINT*)&state->attributes, (ULONG*)&state->size,
+            &xdir->media->media, name, (UINT*)&state->attributes, (ULONG*)&state->size,
             (UINT*)&state->time_stamp.year, (UINT*)&state->time_stamp.month,
             (UINT*)&state->time_stamp.day, (UINT*)&state->time_stamp.hour,
             (UINT*)&state->time_stamp.minute, (UINT*)&state->time_stamp.second) != FX_SUCCESS)
     {
-        mutex_unlock(&fx_dir->media->mutex);
+        mutex_unlock(&xdir->media->mutex);
         return SMAC_RET_LOW_LEVEL_FAILURE;
     }
 
     state->kind = (state->attributes & FX_DIRECTORY) ? MEDIA_ENTITY_DIR : MEDIA_ENTITY_FILE;
 
-    fx_dir->entry_index = fx_dir->media->media.fx_media_directory_next_full_entry_finds;
-    mutex_unlock(&fx_dir->media->mutex);
+    xdir->entry_index = xdir->media->media.fx_media_directory_next_full_entry_finds;
+    mutex_unlock(&xdir->media->mutex);
 
     return SMAC_RET_OK;
 }
@@ -1107,9 +1194,14 @@ smacRetCode_t smac_media_dir_next_item_state(smacDirectoryHandle_t dir, smacMedi
 /// @return SMAC_RET_OK on success, error code otherwise
 smacRetCode_t smac_media_dir_rewind(smacDirectoryHandle_t dir)
 {
-    filexDir_t* fx_dir = (filexDir_t*)dir;
+    filexDir_t* xdir = (filexDir_t*)dir;
 
-    fx_dir->entry_index = 0;
+    assert(xdir != NULL);
+    assert(xdir->media != NULL);
+    assert(xdir->media->media.fx_media_id == FX_MEDIA_ID);
+    assert(xdir->path != NULL);
+
+    xdir->entry_index = 0;
 
     return SMAC_RET_OK;
 }

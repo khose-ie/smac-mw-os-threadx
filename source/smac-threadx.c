@@ -7,6 +7,7 @@
 /// @author  Khose-ie<khose-ie@outlook.com>
 /// @date    2024-06-10
 
+#include <assert.h>
 #include <smac-os.h>
 #include <smac-threadx.h>
 #include <stdlib.h>
@@ -14,12 +15,12 @@
 #include <tx_block_pool.h>
 #include <tx_byte_pool.h>
 #include <tx_event_flags.h>
+#include <tx_initialize.h>
 #include <tx_mutex.h>
 #include <tx_queue.h>
 #include <tx_semaphore.h>
 #include <tx_thread.h>
 #include <tx_timer.h>
-#include <tx_initialize.h>
 
 #ifndef SMAC_TX_OS_STACK_SIZE
 #define SMAC_TX_OS_STACK_SIZE (1024 * 64)
@@ -275,13 +276,10 @@ static smacTaskPriority_t _convert_threadx_task_priority(UINT threadx_priority)
 /// @return SMAC_RET_OK on success, error code otherwise
 smacRetCode_t smac_os_initialize(void)
 {
-    if (OS_STACK_SIZE < OS_STACK_REQUIRED_SIZE)
-    {
-        return SMAC_RET_OS_KERNEL_ERR;
-    }
+    assert(OS_STACK_SIZE >= OS_STACK_REQUIRED_SIZE);
 
     memset(OS_STACK, 0, OS_STACK_SIZE);
-    os_instance()->os.stack_mem = (uint8_t*)os_instance() + OS_STACK_CONTROL_BLOCK_SIZE;
+    os_instance()->os.stack_mem = (uint8_t*)OS_STACK + OS_STACK_CONTROL_BLOCK_SIZE;
 
     _tx_initialize_kernel_setup();
 
@@ -581,20 +579,15 @@ void smac_event_delete(smacEventHandle_t event)
 /// @return Pointer to the event object's name string
 const char* smac_event_name(smacEventHandle_t event)
 {
-    char* name = NULL;
+    char* name                   = NULL;
+    TX_EVENT_FLAGS_GROUP* xevent = (TX_EVENT_FLAGS_GROUP*)event;
 
-    if (event == NULL)
-    {
-        return NULL;
-    }
+    assert(xevent != NULL);
+    assert(xevent->tx_event_flags_group_id == TX_EVENT_FLAGS_ID);
 
-    if (tx_event_flags_info_get((TX_EVENT_FLAGS_GROUP*)event, (CHAR**)&name, NULL, NULL, NULL,
-                                NULL) != TX_SUCCESS)
-    {
-        return NULL;
-    }
-
-    return name;
+    return (tx_event_flags_info_get(xevent, (CHAR**)&name, NULL, NULL, NULL, NULL) == TX_SUCCESS)
+               ? name
+               : NULL;
 }
 
 /// @brief  Get the current state of an event object
@@ -603,25 +596,15 @@ const char* smac_event_name(smacEventHandle_t event)
 /// @return Current state (flags) of the event object
 uint32_t smac_event_state(smacEventHandle_t event)
 {
-    uint32_t events_state = 0;
+    uint32_t events_state        = 0;
+    TX_EVENT_FLAGS_GROUP* xevent = (TX_EVENT_FLAGS_GROUP*)event;
 
-    if (event == NULL)
-    {
-        return 0;
-    }
+    assert(xevent != NULL);
+    assert(xevent->tx_event_flags_group_id == TX_EVENT_FLAGS_ID);
 
-    if (((TX_EVENT_FLAGS_GROUP*)event)->tx_event_flags_group_id != TX_EVENT_FLAGS_ID)
-    {
-        return 0;
-    }
-
-    if (tx_event_flags_info_get((TX_EVENT_FLAGS_GROUP*)event, NULL, &events_state, NULL, NULL,
-                                NULL) != TX_SUCCESS)
-    {
-        return 0;
-    }
-
-    return events_state;
+    return (tx_event_flags_info_get(xevent, NULL, &events_state, NULL, NULL, NULL) == TX_SUCCESS)
+               ? events_state
+               : 0;
 }
 
 /// @brief  Put event flags
@@ -632,24 +615,17 @@ uint32_t smac_event_state(smacEventHandle_t event)
 smacRetCode_t smac_event_put(smacEventHandle_t event, uint32_t flags)
 {
     uint32_t events_state;
+    TX_EVENT_FLAGS_GROUP* xevent = (TX_EVENT_FLAGS_GROUP*)event;
 
-    if (event == NULL)
-    {
-        return SMAC_RET_NULL_REF;
-    }
+    assert(xevent != NULL);
+    assert(xevent->tx_event_flags_group_id == TX_EVENT_FLAGS_ID);
 
-    if (((TX_EVENT_FLAGS_GROUP*)event)->tx_event_flags_group_id != TX_EVENT_FLAGS_ID)
-    {
-        return SMAC_RET_PARAM_ERR;
-    }
-
-    if (tx_event_flags_set((TX_EVENT_FLAGS_GROUP*)event, (ULONG)flags, TX_OR) != TX_SUCCESS)
+    if (tx_event_flags_set(xevent, (ULONG)flags, TX_OR) != TX_SUCCESS)
     {
         return SMAC_RET_OS_EVENT_ERR;
     }
 
-    if (tx_event_flags_info_get((TX_EVENT_FLAGS_GROUP*)event, NULL, &events_state, NULL, NULL,
-                                NULL) != TX_SUCCESS)
+    if (tx_event_flags_info_get(xevent, NULL, &events_state, NULL, NULL, NULL) != TX_SUCCESS)
     {
         return SMAC_RET_OS_EVENT_ERR;
     }
@@ -667,19 +643,18 @@ smacRetCode_t smac_event_put(smacEventHandle_t event, uint32_t flags)
 smacRetCode_t smac_event_wait(smacEventHandle_t event, uint32_t events_value, uint32_t timeout)
 {
     ULONG event_value;
+    TX_EVENT_FLAGS_GROUP* xevent = (TX_EVENT_FLAGS_GROUP*)event;
 
-    if ((event == NULL) || (events_value == SMAC_OS_EVENT_NONE))
-    {
-        return SMAC_RET_NULL_REF;
-    }
+    assert(xevent != NULL);
+    assert(xevent->tx_event_flags_group_id == TX_EVENT_FLAGS_ID);
 
-    if (((TX_EVENT_FLAGS_GROUP*)event)->tx_event_flags_group_id != TX_EVENT_FLAGS_ID)
+    if (events_value == SMAC_OS_EVENT_NONE)
     {
         return SMAC_RET_PARAM_ERR;
     }
 
-    if (tx_event_flags_get((TX_EVENT_FLAGS_GROUP*)event, (ULONG)events_value, TX_OR, &event_value,
-                           (ULONG)timeout) != TX_SUCCESS)
+    if (tx_event_flags_get(xevent, (ULONG)events_value, TX_OR, &event_value, (ULONG)timeout) !=
+        TX_SUCCESS)
     {
         return SMAC_RET_OS_EVENT_ERR;
     }
@@ -698,10 +673,14 @@ smacRetCode_t smac_event_wait(smacEventHandle_t event, uint32_t events_value, ui
 /// @param flags Flags to be cleared
 void smac_event_clear(smacEventHandle_t event, uint32_t events_value)
 {
-    if ((event != NULL) && (events_value != SMAC_OS_EVENT_NONE) &&
-        (((TX_EVENT_FLAGS_GROUP*)event)->tx_event_flags_group_id == TX_EVENT_FLAGS_ID))
+    TX_EVENT_FLAGS_GROUP* xevent = (TX_EVENT_FLAGS_GROUP*)event;
+
+    assert(xevent != NULL);
+    assert(xevent->tx_event_flags_group_id == TX_EVENT_FLAGS_ID);
+
+    if (events_value != SMAC_OS_EVENT_NONE)
     {
-        tx_event_flags_set((TX_EVENT_FLAGS_GROUP*)event, (ULONG)events_value, TX_AND);
+        tx_event_flags_set(xevent, (ULONG)events_value, TX_AND);
     }
 }
 
@@ -717,34 +696,29 @@ void smac_event_clear(smacEventHandle_t event, uint32_t events_value)
 smacRetCode_t smac_event_wait_and_clear(smacEventHandle_t event, uint32_t events_value,
                                         uint32_t* out_events_value, uint32_t timeout)
 {
-    ULONG event_value;
+    TX_EVENT_FLAGS_GROUP* xevent = (TX_EVENT_FLAGS_GROUP*)event;
 
-    if ((event == NULL) || (events_value == SMAC_OS_EVENT_NONE))
-    {
-        return SMAC_RET_NULL_REF;
-    }
+    assert(xevent != NULL);
+    assert(xevent->tx_event_flags_group_id == TX_EVENT_FLAGS_ID);
+    assert(out_events_value != NULL);
 
-    if (((TX_EVENT_FLAGS_GROUP*)event)->tx_event_flags_group_id != TX_EVENT_FLAGS_ID)
+    if (events_value == SMAC_OS_EVENT_NONE)
     {
         return SMAC_RET_PARAM_ERR;
     }
 
-    if (tx_event_flags_get((TX_EVENT_FLAGS_GROUP*)event, (ULONG)events_value, TX_OR, &event_value,
+    if (tx_event_flags_get(xevent, (ULONG)events_value, TX_OR, (ULONG*)out_events_value,
                            (ULONG)timeout) != TX_SUCCESS)
     {
         return SMAC_RET_OS_EVENT_ERR;
     }
 
-    if ((event_value & events_value) == SMAC_OS_EVENT_NONE)
+    if (((*out_events_value) & events_value) == SMAC_OS_EVENT_NONE)
     {
         return SMAC_RET_OS_EVENT_ERR;
     }
 
-    if (out_events_value != NULL)
-    {
-        *out_events_value = (uint32_t)(event_value & events_value);
-    }
-
+    *out_events_value &= events_value;
     smac_event_clear(event, *out_events_value);
 
     return SMAC_RET_OK;
@@ -847,25 +821,15 @@ void smac_message_queue_delete_static(smacMessageQueueHandle_t queue)
 /// @return Pointer to the message queue's name string
 const char* smac_message_queue_name(smacMessageQueueHandle_t queue)
 {
-    char* name = NULL;
+    char* name       = NULL;
+    TX_QUEUE* xqueue = (TX_QUEUE*)queue;
 
-    if (queue == NULL)
-    {
-        return NULL;
-    }
+    assert(xqueue != NULL);
+    assert(xqueue->tx_queue_id == TX_QUEUE_ID);
 
-    if (((TX_QUEUE*)queue)->tx_queue_id != TX_QUEUE_ID)
-    {
-        return NULL;
-    }
-
-    if (tx_queue_info_get((TX_QUEUE*)queue, (CHAR**)&name, NULL, NULL, NULL, NULL, NULL) !=
-        TX_SUCCESS)
-    {
-        return NULL;
-    }
-
-    return name;
+    return (tx_queue_info_get(xqueue, (CHAR**)&name, NULL, NULL, NULL, NULL, NULL) == TX_SUCCESS)
+               ? name
+               : NULL;
 }
 
 /// @brief  Get the size of a message in the queue
@@ -873,17 +837,12 @@ const char* smac_message_queue_name(smacMessageQueueHandle_t queue)
 /// @return Size of each message in bytes
 uint32_t smac_message_queue_message_size(smacMessageQueueHandle_t queue)
 {
-    if (queue == NULL)
-    {
-        return 0;
-    }
+    TX_QUEUE* xqueue = (TX_QUEUE*)queue;
 
-    if (((TX_QUEUE*)queue)->tx_queue_id != TX_QUEUE_ID)
-    {
-        return 0;
-    }
+    assert(xqueue != NULL);
+    assert(xqueue->tx_queue_id == TX_QUEUE_ID);
 
-    return ((TX_QUEUE*)queue)->tx_queue_message_size * sizeof(ULONG);
+    return xqueue->tx_queue_message_size * sizeof(ULONG);
 }
 
 /// @brief  Get the number of messages currently in the queue
@@ -891,25 +850,16 @@ uint32_t smac_message_queue_message_size(smacMessageQueueHandle_t queue)
 /// @return Number of messages currently in the queue
 uint32_t smac_message_queue_message_count(smacMessageQueueHandle_t queue)
 {
-    ULONG queued_messages_number = 0U;
+    ULONG queued_messages_num = 0U;
+    TX_QUEUE* xqueue          = (TX_QUEUE*)queue;
 
-    if (queue == NULL)
-    {
-        return 0;
-    }
+    assert(xqueue != NULL);
+    assert(xqueue->tx_queue_id == TX_QUEUE_ID);
 
-    if (((TX_QUEUE*)queue)->tx_queue_id != TX_QUEUE_ID)
-    {
-        return 0;
-    }
-
-    if (tx_queue_info_get((TX_QUEUE*)queue, NULL, &queued_messages_number, NULL, NULL, NULL,
-                          NULL) != TX_SUCCESS)
-    {
-        return 0;
-    }
-
-    return (uint32_t)queued_messages_number;
+    return (tx_queue_info_get(xqueue, NULL, &queued_messages_num, NULL, NULL, NULL, NULL) ==
+            TX_SUCCESS)
+               ? (uint32_t)queued_messages_num
+               : 0;
 }
 
 /// @brief  Get the maximum number of messages the queue can hold
@@ -917,21 +867,16 @@ uint32_t smac_message_queue_message_count(smacMessageQueueHandle_t queue)
 /// @return Maximum number of messages the queue can hold
 uint32_t smac_message_queue_max_message_count(smacMessageQueueHandle_t queue)
 {
-    if (queue == NULL)
-    {
-        return 0;
-    }
+    TX_QUEUE* xqueue = (TX_QUEUE*)queue;
 
-    if (((TX_QUEUE*)queue)->tx_queue_id != TX_QUEUE_ID)
-    {
-        return 0;
-    }
+    assert(xqueue != NULL);
+    assert(xqueue->tx_queue_id == TX_QUEUE_ID);
 
-    return (uint32_t)((TX_QUEUE*)queue)->tx_queue_capacity;
+    return (uint32_t)xqueue->tx_queue_capacity;
 }
 
-/// @brief  Receive a message from the queue
-/// @details This function receives a message from the specified message queue.
+/// @brief  Send a message to the queue
+/// @details This function sends a message to the specified message queue.
 /// @param queue    Handle to the message queue
 /// @param message  Pointer to the buffer to store the received message
 /// @param timeout  Timeout in milliseconds to wait for a message (0 for no wait, UINT32_MAX for
@@ -940,22 +885,15 @@ uint32_t smac_message_queue_max_message_count(smacMessageQueueHandle_t queue)
 smacRetCode_t smac_message_queue_send(smacMessageQueueHandle_t queue, const void* message,
                                       uint32_t timeout)
 {
-    if ((queue == NULL) || (message == NULL))
-    {
-        return SMAC_RET_NULL_REF;
-    }
+    TX_QUEUE* xqueue = (TX_QUEUE*)queue;
 
-    if (((TX_QUEUE*)queue)->tx_queue_id != TX_QUEUE_ID)
-    {
-        return SMAC_RET_PARAM_ERR;
-    }
+    assert(xqueue != NULL);
+    assert(xqueue->tx_queue_id == TX_QUEUE_ID);
+    assert(message != NULL);
 
-    if (tx_queue_send((TX_QUEUE*)queue, (VOID*)message, (ULONG)timeout) != TX_SUCCESS)
-    {
-        return SMAC_RET_OS_MQ_ERR;
-    }
-
-    return SMAC_RET_OK;
+    return (tx_queue_send(xqueue, (VOID*)message, (ULONG)timeout) == TX_SUCCESS)
+               ? SMAC_RET_OK
+               : SMAC_RET_OS_MQ_ERR;
 }
 
 /// @brief  Receive a message from the queue
@@ -968,22 +906,14 @@ smacRetCode_t smac_message_queue_send(smacMessageQueueHandle_t queue, const void
 smacRetCode_t smac_message_queue_receive(smacMessageQueueHandle_t queue, void* message,
                                          uint32_t timeout)
 {
-    if ((queue == NULL) || (message == NULL))
-    {
-        return SMAC_RET_NULL_REF;
-    }
+    TX_QUEUE* xqueue = (TX_QUEUE*)queue;
 
-    if (((TX_QUEUE*)queue)->tx_queue_id != TX_QUEUE_ID)
-    {
-        return SMAC_RET_PARAM_ERR;
-    }
+    assert(xqueue != NULL);
+    assert(xqueue->tx_queue_id == TX_QUEUE_ID);
+    assert(message != NULL);
 
-    if (tx_queue_receive((TX_QUEUE*)queue, message, (ULONG)timeout) != TX_SUCCESS)
-    {
-        return SMAC_RET_OS_MQ_ERR;
-    }
-
-    return SMAC_RET_OK;
+    return (tx_queue_receive(xqueue, message, (ULONG)timeout) == TX_SUCCESS) ? SMAC_RET_OK
+                                                                             : SMAC_RET_OS_MQ_ERR;
 }
 
 /// @brief  Clear all messages from the queue
@@ -991,10 +921,12 @@ smacRetCode_t smac_message_queue_receive(smacMessageQueueHandle_t queue, void* m
 /// @param queue Handle to the message queue
 void smac_message_queue_clear(smacMessageQueueHandle_t queue)
 {
-    if ((queue != NULL) && (((TX_QUEUE*)queue)->tx_queue_id == TX_QUEUE_ID))
-    {
-        tx_queue_flush((TX_QUEUE*)queue);
-    }
+    TX_QUEUE* xqueue = (TX_QUEUE*)queue;
+
+    assert(xqueue != NULL);
+    assert(xqueue->tx_queue_id == TX_QUEUE_ID);
+
+    tx_queue_flush(xqueue);
 }
 
 /// @brief  Create a new memory pool
@@ -1094,25 +1026,16 @@ void smac_mem_pool_delete_static(smacMemPoolHandle_t pool)
 /// @return Pointer to the memory pool's name string
 const char* smac_mem_pool_name(smacMemPoolHandle_t pool)
 {
-    char* name = NULL;
+    char* name           = NULL;
+    TX_BLOCK_POOL* xpool = (TX_BLOCK_POOL*)pool;
 
-    if (pool == NULL)
-    {
-        return NULL;
-    }
+    assert(xpool != NULL);
+    assert(xpool->tx_block_pool_id == TX_BLOCK_POOL_ID);
 
-    if (((TX_BLOCK_POOL*)pool)->tx_block_pool_id != TX_BLOCK_POOL_ID)
-    {
-        return NULL;
-    }
-
-    if (tx_block_pool_info_get((TX_BLOCK_POOL*)pool, (CHAR**)&name, NULL, NULL, NULL, NULL, NULL) !=
-        TX_SUCCESS)
-    {
-        return NULL;
-    }
-
-    return name;
+    return (tx_block_pool_info_get(xpool, (CHAR**)&name, NULL, NULL, NULL, NULL, NULL) ==
+            TX_SUCCESS)
+               ? name
+               : NULL;
 }
 
 /// @brief  Get the size of each memory block in the pool
@@ -1120,17 +1043,12 @@ const char* smac_mem_pool_name(smacMemPoolHandle_t pool)
 /// @return Size of each memory block in bytes
 uint32_t smac_mem_pool_block_size(smacMemPoolHandle_t pool)
 {
-    if (pool == NULL)
-    {
-        return 0;
-    }
+    TX_BLOCK_POOL* xpool = (TX_BLOCK_POOL*)pool;
 
-    if (((TX_BLOCK_POOL*)pool)->tx_block_pool_id != TX_BLOCK_POOL_ID)
-    {
-        return 0;
-    }
+    assert(xpool != NULL);
+    assert(xpool->tx_block_pool_id == TX_BLOCK_POOL_ID);
 
-    return (uint32_t)((TX_BLOCK_POOL*)pool)->tx_block_pool_block_size;
+    return (uint32_t)xpool->tx_block_pool_block_size;
 }
 
 /// @brief  Get the number of used memory blocks in the pool
@@ -1140,24 +1058,15 @@ uint32_t smac_mem_pool_block_count(smacMemPoolHandle_t pool)
 {
     ULONG available_blocks = 0U;
     ULONG total_blocks     = 0U;
+    TX_BLOCK_POOL* xpool   = (TX_BLOCK_POOL*)pool;
 
-    if (pool == NULL)
-    {
-        return 0;
-    }
+    assert(xpool != NULL);
+    assert(xpool->tx_block_pool_id == TX_BLOCK_POOL_ID);
 
-    if (((TX_BLOCK_POOL*)pool)->tx_block_pool_id != TX_BLOCK_POOL_ID)
-    {
-        return 0;
-    }
-
-    if (tx_block_pool_info_get((TX_BLOCK_POOL*)pool, NULL, &available_blocks, &total_blocks, NULL,
-                               NULL, NULL) != TX_SUCCESS)
-    {
-        return 0;
-    }
-
-    return (uint32_t)(total_blocks - available_blocks);
+    return (tx_block_pool_info_get(xpool, NULL, &available_blocks, &total_blocks, NULL, NULL,
+                                   NULL) != TX_SUCCESS)
+               ? 0
+               : (uint32_t)(total_blocks - available_blocks);
 }
 
 /// @brief  Get the maximum number of memory blocks in the pool
@@ -1165,25 +1074,16 @@ uint32_t smac_mem_pool_block_count(smacMemPoolHandle_t pool)
 /// @return Maximum number of memory blocks in the pool
 uint32_t smac_mem_pool_max_block_count(smacMemPoolHandle_t pool)
 {
-    ULONG total_blocks = 0U;
+    ULONG total_blocks   = 0U;
+    TX_BLOCK_POOL* xpool = (TX_BLOCK_POOL*)pool;
 
-    if (pool == NULL)
-    {
-        return 0;
-    }
+    assert(xpool != NULL);
+    assert(xpool->tx_block_pool_id == TX_BLOCK_POOL_ID);
 
-    if (((TX_BLOCK_POOL*)pool)->tx_block_pool_id != TX_BLOCK_POOL_ID)
-    {
-        return 0;
-    }
-
-    if (tx_block_pool_info_get((TX_BLOCK_POOL*)pool, NULL, NULL, &total_blocks, NULL, NULL, NULL) !=
-        TX_SUCCESS)
-    {
-        return 0;
-    }
-
-    return (uint32_t)total_blocks;
+    return (tx_block_pool_info_get(xpool, NULL, NULL, &total_blocks, NULL, NULL, NULL) !=
+            TX_SUCCESS)
+               ? 0
+               : (uint32_t)total_blocks;
 }
 
 /// @brief  Allocate a memory block from the pool
@@ -1194,24 +1094,13 @@ uint32_t smac_mem_pool_max_block_count(smacMemPoolHandle_t pool)
 /// @return Pointer to the allocated memory block, or NULL on failure
 void* smac_mem_pool_alloc(smacMemPoolHandle_t pool, uint32_t timeout)
 {
-    VOID* block = NULL;
+    VOID* mem            = NULL;
+    TX_BLOCK_POOL* xpool = (TX_BLOCK_POOL*)pool;
 
-    if (pool == NULL)
-    {
-        return NULL;
-    }
+    assert(xpool != NULL);
+    assert(xpool->tx_block_pool_id == TX_BLOCK_POOL_ID);
 
-    if (((TX_BLOCK_POOL*)pool)->tx_block_pool_id != TX_BLOCK_POOL_ID)
-    {
-        return NULL;
-    }
-
-    if (tx_block_allocate((TX_BLOCK_POOL*)pool, &block, (ULONG)timeout) != TX_SUCCESS)
-    {
-        return NULL;
-    }
-
-    return block;
+    return (tx_block_allocate(xpool, &mem, (ULONG)timeout) == TX_SUCCESS) ? mem : NULL;
 }
 
 /// @brief  Free a memory block back to the pool
@@ -1221,8 +1110,12 @@ void* smac_mem_pool_alloc(smacMemPoolHandle_t pool, uint32_t timeout)
 /// @param block Pointer to the memory block to be freed
 void smac_mem_pool_free(smacMemPoolHandle_t pool, void* block)
 {
-    if ((pool != NULL) && (block != NULL) &&
-        (((TX_BLOCK_POOL*)pool)->tx_block_pool_id == TX_BLOCK_POOL_ID))
+    TX_BLOCK_POOL* xpool = (TX_BLOCK_POOL*)pool;
+
+    assert(xpool != NULL);
+    assert(xpool->tx_block_pool_id == TX_BLOCK_POOL_ID);
+
+    if (block != NULL)
     {
         tx_block_release(block);
     }
@@ -1267,25 +1160,15 @@ void smac_mutex_delete(smacMutexHandle_t mutex)
 /// @return Pointer to the mutex's name string
 const char* smac_mutex_name(smacMutexHandle_t mutex)
 {
-    char* name = NULL;
+    char* name       = NULL;
+    TX_MUTEX* xmutex = (TX_MUTEX*)mutex;
 
-    if (mutex == NULL)
-    {
-        return NULL;
-    }
+    assert(xmutex != NULL);
+    assert(xmutex->tx_mutex_id == TX_MUTEX_ID);
 
-    if (((TX_MUTEX*)mutex)->tx_mutex_id != TX_MUTEX_ID)
-    {
-        return NULL;
-    }
-
-    if (tx_mutex_info_get((TX_MUTEX*)mutex, (CHAR**)&name, NULL, NULL, NULL, NULL, NULL) !=
-        TX_SUCCESS)
-    {
-        return NULL;
-    }
-
-    return name;
+    return (tx_mutex_info_get(xmutex, (CHAR**)&name, NULL, NULL, NULL, NULL, NULL) == TX_SUCCESS)
+               ? name
+               : NULL;
 }
 
 /// @brief  Get the owner of a mutex
@@ -1296,23 +1179,14 @@ const char* smac_mutex_name(smacMutexHandle_t mutex)
 smacTaskHandle_t smac_mutex_owner(smacMutexHandle_t mutex)
 {
     TX_THREAD* owner = NULL;
+    TX_MUTEX* xmutex = (TX_MUTEX*)mutex;
 
-    if (mutex == NULL)
-    {
-        return NULL;
-    }
+    assert(xmutex != NULL);
+    assert(xmutex->tx_mutex_id == TX_MUTEX_ID);
 
-    if (((TX_MUTEX*)mutex)->tx_mutex_id != TX_MUTEX_ID)
-    {
-        return NULL;
-    }
-
-    if (tx_mutex_info_get((TX_MUTEX*)mutex, NULL, NULL, &owner, NULL, NULL, NULL) != TX_SUCCESS)
-    {
-        return NULL;
-    }
-
-    return (smacTaskHandle_t)owner;
+    return (tx_mutex_info_get(xmutex, NULL, NULL, &owner, NULL, NULL, NULL) == TX_SUCCESS)
+               ? (smacTaskHandle_t)owner
+               : NULL;
 }
 
 /// @brief  Lock a mutex
@@ -1323,22 +1197,13 @@ smacTaskHandle_t smac_mutex_owner(smacMutexHandle_t mutex)
 /// @return SMAC_RET_OK on success, error code otherwise
 smacRetCode_t smac_mutex_lock(smacMutexHandle_t mutex, uint32_t timeout)
 {
-    if (mutex == NULL)
-    {
-        return SMAC_RET_NULL_REF;
-    }
+    TX_MUTEX* xmutex = (TX_MUTEX*)mutex;
 
-    if (((TX_MUTEX*)mutex)->tx_mutex_id != TX_MUTEX_ID)
-    {
-        return SMAC_RET_PARAM_ERR;
-    }
+    assert(xmutex != NULL);
+    assert(xmutex->tx_mutex_id == TX_MUTEX_ID);
 
-    if (tx_mutex_get((TX_MUTEX*)mutex, (ULONG)timeout) != TX_SUCCESS)
-    {
-        return SMAC_RET_OS_MUTEX_ERR;
-    }
-
-    return SMAC_RET_OK;
+    return (tx_mutex_get(xmutex, (ULONG)timeout) == TX_SUCCESS) ? SMAC_RET_OK
+                                                                : SMAC_RET_OS_MUTEX_ERR;
 }
 
 /// @brief  Unlock a mutex
@@ -1347,22 +1212,12 @@ smacRetCode_t smac_mutex_lock(smacMutexHandle_t mutex, uint32_t timeout)
 /// @return SMAC_RET_OK on success, error code otherwise
 smacRetCode_t smac_mutex_unlock(smacMutexHandle_t mutex)
 {
-    if (mutex == NULL)
-    {
-        return SMAC_RET_NULL_REF;
-    }
+    TX_MUTEX* xmutex = (TX_MUTEX*)mutex;
 
-    if (((TX_MUTEX*)mutex)->tx_mutex_id != TX_MUTEX_ID)
-    {
-        return SMAC_RET_PARAM_ERR;
-    }
+    assert(xmutex != NULL);
+    assert(xmutex->tx_mutex_id == TX_MUTEX_ID);
 
-    if (tx_mutex_put((TX_MUTEX*)mutex) != TX_SUCCESS)
-    {
-        return SMAC_RET_OS_MUTEX_ERR;
-    }
-
-    return SMAC_RET_OK;
+    return (tx_mutex_put(xmutex) == TX_SUCCESS) ? SMAC_RET_OK : SMAC_RET_OS_MUTEX_ERR;
 }
 
 /// @brief  Create a new semaphore
@@ -1405,25 +1260,15 @@ void smac_semaphore_delete(smacSemaphoreHandle_t semaphore)
 /// @return Pointer to the semaphore's name string
 const char* smac_semaphore_name(smacSemaphoreHandle_t semaphore)
 {
-    char* name = NULL;
+    char* name               = NULL;
+    TX_SEMAPHORE* xsemaphore = (TX_SEMAPHORE*)semaphore;
 
-    if (semaphore == NULL)
-    {
-        return NULL;
-    }
+    assert(xsemaphore != NULL);
+    assert(xsemaphore->tx_semaphore_id == TX_SEMAPHORE_ID);
 
-    if (((TX_SEMAPHORE*)semaphore)->tx_semaphore_id != TX_SEMAPHORE_ID)
-    {
-        return NULL;
-    }
-
-    if (tx_semaphore_info_get((TX_SEMAPHORE*)semaphore, (CHAR**)&name, NULL, NULL, NULL, NULL) !=
-        TX_SUCCESS)
-    {
-        return NULL;
-    }
-
-    return name;
+    return (tx_semaphore_info_get(xsemaphore, (CHAR**)&name, NULL, NULL, NULL, NULL) == TX_SUCCESS)
+               ? name
+               : NULL;
 }
 
 /// @brief  Get the current count of a semaphore
@@ -1431,25 +1276,15 @@ const char* smac_semaphore_name(smacSemaphoreHandle_t semaphore)
 /// @return Current count of the semaphore
 uint32_t smac_semaphore_count(smacSemaphoreHandle_t semaphore)
 {
-    ULONG current_count = 0U;
+    ULONG current_count      = 0U;
+    TX_SEMAPHORE* xsemaphore = (TX_SEMAPHORE*)semaphore;
 
-    if (semaphore == NULL)
-    {
-        return 0;
-    }
+    assert(xsemaphore != NULL);
+    assert(xsemaphore->tx_semaphore_id == TX_SEMAPHORE_ID);
 
-    if (((TX_SEMAPHORE*)semaphore)->tx_semaphore_id != TX_SEMAPHORE_ID)
-    {
-        return 0;
-    }
-
-    if (tx_semaphore_info_get((TX_SEMAPHORE*)semaphore, NULL, &current_count, NULL, NULL, NULL) !=
-        TX_SUCCESS)
-    {
-        return 0;
-    }
-
-    return (uint32_t)current_count;
+    return (tx_semaphore_info_get(xsemaphore, NULL, &current_count, NULL, NULL, NULL) == TX_SUCCESS)
+               ? (uint32_t)current_count
+               : 0;
 }
 
 /// @brief  Take (decrement) a semaphore
@@ -1461,22 +1296,13 @@ uint32_t smac_semaphore_count(smacSemaphoreHandle_t semaphore)
 /// @return SMAC_RET_OK on success, error code otherwise
 smacRetCode_t smac_semaphore_take(smacSemaphoreHandle_t semaphore, uint32_t timeout)
 {
-    if (semaphore == NULL)
-    {
-        return SMAC_RET_NULL_REF;
-    }
+    TX_SEMAPHORE* xsemaphore = (TX_SEMAPHORE*)semaphore;
 
-    if (((TX_SEMAPHORE*)semaphore)->tx_semaphore_id != TX_SEMAPHORE_ID)
-    {
-        return SMAC_RET_PARAM_ERR;
-    }
+    assert(xsemaphore != NULL);
+    assert(xsemaphore->tx_semaphore_id == TX_SEMAPHORE_ID);
 
-    if (tx_semaphore_get((TX_SEMAPHORE*)semaphore, (ULONG)timeout) != TX_SUCCESS)
-    {
-        return SMAC_RET_OS_SEMAPHORE_ERR;
-    }
-
-    return SMAC_RET_OK;
+    return (tx_semaphore_get(xsemaphore, (ULONG)timeout) == TX_SUCCESS) ? SMAC_RET_OK
+                                                                        : SMAC_RET_OS_SEMAPHORE_ERR;
 }
 
 /// @brief  Release (increment) a semaphore
@@ -1485,22 +1311,12 @@ smacRetCode_t smac_semaphore_take(smacSemaphoreHandle_t semaphore, uint32_t time
 /// @return SMAC_RET_OK on success, error code otherwise
 smacRetCode_t smac_semaphore_release(smacSemaphoreHandle_t semaphore)
 {
-    if (semaphore == NULL)
-    {
-        return SMAC_RET_NULL_REF;
-    }
+    TX_SEMAPHORE* xsemaphore = (TX_SEMAPHORE*)semaphore;
 
-    if (((TX_SEMAPHORE*)semaphore)->tx_semaphore_id != TX_SEMAPHORE_ID)
-    {
-        return SMAC_RET_PARAM_ERR;
-    }
+    assert(xsemaphore != NULL);
+    assert(xsemaphore->tx_semaphore_id == TX_SEMAPHORE_ID);
 
-    if (tx_semaphore_put((TX_SEMAPHORE*)semaphore) != TX_SUCCESS)
-    {
-        return SMAC_RET_OS_SEMAPHORE_ERR;
-    }
-
-    return SMAC_RET_OK;
+    return (tx_semaphore_put(xsemaphore) == TX_SUCCESS) ? SMAC_RET_OK : SMAC_RET_OS_SEMAPHORE_ERR;
 }
 
 /// @brief  Create a new task
@@ -1515,10 +1331,8 @@ smacRetCode_t smac_semaphore_release(smacSemaphoreHandle_t semaphore)
 smacTaskHandle_t smac_task_create(const char* name, void (*main)(void*), void* arg,
                                   uint32_t stack_size, smacTaskPriority_t priority)
 {
-    if ((main == NULL) || (stack_size == 0) || (stack_size < TX_MINIMUM_STACK))
-    {
-        return NULL;
-    }
+    assert(main != NULL);
+    assert(stack_size >= TX_MINIMUM_STACK);
 
     TX_THREAD* thread = (TX_THREAD*)_mem_alloc(sizeof(TX_THREAD));
 
@@ -1563,10 +1377,9 @@ smacTaskHandle_t smac_task_create_static(const char* name, void (*main)(void*), 
                                          uint8_t* stack, uint32_t stack_size,
                                          smacTaskPriority_t priority)
 {
-    if ((main == NULL) || (stack == NULL) || (stack_size == 0) || (stack_size < TX_MINIMUM_STACK))
-    {
-        return NULL;
-    }
+    assert(main != NULL);
+    assert(stack != NULL);
+    assert(stack_size >= TX_MINIMUM_STACK);
 
     TX_THREAD* thread = (TX_THREAD*)_mem_alloc(sizeof(TX_THREAD));
 
@@ -1626,25 +1439,16 @@ void smac_task_delete_static(smacTaskHandle_t task)
 /// @return Pointer to the task's name string
 const char* smac_task_name(smacTaskHandle_t task)
 {
-    char* name = NULL;
+    char* name       = NULL;
+    TX_THREAD* xtask = (TX_THREAD*)task;
 
-    if (task == NULL)
-    {
-        return NULL;
-    }
+    assert(xtask != NULL);
+    assert(xtask->tx_thread_id == TX_THREAD_ID);
 
-    if (((TX_THREAD*)task)->tx_thread_id != TX_THREAD_ID)
-    {
-        return NULL;
-    }
-
-    if (tx_thread_info_get((TX_THREAD*)task, (CHAR**)&name, NULL, NULL, NULL, NULL, NULL, NULL,
-                           NULL) != TX_SUCCESS)
-    {
-        return NULL;
-    }
-
-    return name;
+    return (tx_thread_info_get((TX_THREAD*)task, (CHAR**)&name, NULL, NULL, NULL, NULL, NULL, NULL,
+                               NULL) == TX_SUCCESS)
+               ? name
+               : NULL;
 }
 
 /// @brief  Get the current state of a task
@@ -1652,17 +1456,12 @@ const char* smac_task_name(smacTaskHandle_t task)
 /// @return Current state of the task
 uint32_t smac_task_stack_size(smacTaskHandle_t task)
 {
-    if (task == NULL)
-    {
-        return 0;
-    }
+    TX_THREAD* xtask = (TX_THREAD*)task;
 
-    if (((TX_THREAD*)task)->tx_thread_id != TX_THREAD_ID)
-    {
-        return 0;
-    }
+    assert(xtask != NULL);
+    assert(xtask->tx_thread_id == TX_THREAD_ID);
 
-    return (uint32_t)((TX_THREAD*)task)->tx_thread_stack_size;
+    return (uint32_t)xtask->tx_thread_stack_size;
 }
 
 /// @brief  Get the priority of a task
@@ -1670,25 +1469,16 @@ uint32_t smac_task_stack_size(smacTaskHandle_t task)
 /// @return Priority of the task
 smacTaskPriority_t smac_task_priority(smacTaskHandle_t task)
 {
-    if (task == NULL)
-    {
-        return SMAC_TASK_PRIORITY_NONE;
-    }
+    TX_THREAD* xtask = (TX_THREAD*)task;
+    UINT priority    = SMAC_TASK_PRIORITY_NONE;
 
-    if (((TX_THREAD*)task)->tx_thread_id != TX_THREAD_ID)
-    {
-        return SMAC_TASK_PRIORITY_NONE;
-    }
+    assert(xtask != NULL);
+    assert(xtask->tx_thread_id == TX_THREAD_ID);
 
-    UINT priority = SMAC_TASK_PRIORITY_NONE;
-
-    if (tx_thread_info_get((TX_THREAD*)task, NULL, NULL, NULL, &priority, NULL, NULL, NULL, NULL) !=
-        TX_SUCCESS)
-    {
-        return SMAC_TASK_PRIORITY_NONE;
-    }
-
-    return _convert_threadx_task_priority(priority);
+    return (tx_thread_info_get((TX_THREAD*)task, NULL, NULL, NULL, &priority, NULL, NULL, NULL,
+                               NULL) == TX_SUCCESS)
+               ? _convert_threadx_task_priority(priority)
+               : SMAC_TASK_PRIORITY_NONE;
 }
 
 /// @brief  Get the current state of a task
@@ -1697,29 +1487,20 @@ smacTaskPriority_t smac_task_priority(smacTaskHandle_t task)
 smacTaskState_t smac_task_state(smacTaskHandle_t task)
 {
     UINT state;
+    TX_THREAD* xtask = (TX_THREAD*)task;
 
-    if (task == NULL)
-    {
-        return SMAC_TASK_STATE_UNKNOWN;
-    }
-
-    if (((TX_THREAD*)task)->tx_thread_id != TX_THREAD_ID)
-    {
-        return SMAC_TASK_STATE_UNKNOWN;
-    }
+    assert(xtask != NULL);
+    assert(xtask->tx_thread_id == TX_THREAD_ID);
 
     if (smac_os_current_task() == task)
     {
         return SMAC_TASK_STATE_RUNNING;
     }
 
-    if (tx_thread_info_get((TX_THREAD*)task, NULL, &state, NULL, NULL, NULL, NULL, NULL, NULL) !=
-        TX_SUCCESS)
-    {
-        return SMAC_TASK_STATE_UNKNOWN;
-    }
-
-    return _convert_threadx_task_state(state);
+    return tx_thread_info_get((TX_THREAD*)task, NULL, &state, NULL, NULL, NULL, NULL, NULL, NULL) ==
+                   TX_SUCCESS
+               ? _convert_threadx_task_state(state)
+               : SMAC_TASK_STATE_UNKNOWN;
 }
 
 /// @brief  Set the priority of a task
@@ -1730,26 +1511,17 @@ smacRetCode_t smac_task_set_priority(smacTaskHandle_t task, smacTaskPriority_t p
 {
     UINT current_priority;
     UINT converted_priority;
+    TX_THREAD* xtask = (TX_THREAD*)task;
 
-    if (task == NULL)
-    {
-        return SMAC_RET_NULL_REF;
-    }
-
-    if (((TX_THREAD*)task)->tx_thread_id != TX_THREAD_ID)
-    {
-        return SMAC_RET_INSTANCE_UNAVAILABLE;
-    }
+    assert(xtask != NULL);
+    assert(xtask->tx_thread_id == TX_THREAD_ID);
 
     converted_priority = (UINT)(SMAC_TASK_PRIORITY_MAX - priority);
 
-    if (tx_thread_priority_change((TX_THREAD*)task, converted_priority, &current_priority) !=
-        TX_SUCCESS)
-    {
-        return SMAC_RET_OS_TASK_ERR;
-    }
-
-    return SMAC_RET_OK;
+    return (tx_thread_priority_change((TX_THREAD*)task, converted_priority, &current_priority) ==
+            TX_SUCCESS)
+               ? SMAC_RET_OK
+               : SMAC_RET_OS_TASK_ERR;
 }
 
 /// @brief  Suspend a task
@@ -1757,22 +1529,12 @@ smacRetCode_t smac_task_set_priority(smacTaskHandle_t task, smacTaskPriority_t p
 /// @return SMAC_RET_OK on success, error code otherwise
 smacRetCode_t smac_task_suspend(smacTaskHandle_t task)
 {
-    if (task == NULL)
-    {
-        return SMAC_RET_NULL_REF;
-    }
+    TX_THREAD* xtask = (TX_THREAD*)task;
 
-    if (((TX_THREAD*)task)->tx_thread_id != TX_THREAD_ID)
-    {
-        return SMAC_RET_INSTANCE_UNAVAILABLE;
-    }
+    assert(xtask != NULL);
+    assert(xtask->tx_thread_id == TX_THREAD_ID);
 
-    if (tx_thread_suspend((TX_THREAD*)task) != TX_SUCCESS)
-    {
-        return SMAC_RET_OS_TASK_ERR;
-    }
-
-    return SMAC_RET_OK;
+    return (tx_thread_suspend(xtask) == TX_SUCCESS) ? SMAC_RET_OK : SMAC_RET_OS_TASK_ERR;
 }
 
 /// @brief  Resume a suspended task
@@ -1780,22 +1542,12 @@ smacRetCode_t smac_task_suspend(smacTaskHandle_t task)
 /// @return SMAC_RET_OK on success, error code otherwise
 smacRetCode_t smac_task_resume(smacTaskHandle_t task)
 {
-    if (task == NULL)
-    {
-        return SMAC_RET_NULL_REF;
-    }
+    TX_THREAD* xtask = (TX_THREAD*)task;
 
-    if (((TX_THREAD*)task)->tx_thread_id != TX_THREAD_ID)
-    {
-        return SMAC_RET_INSTANCE_UNAVAILABLE;
-    }
+    assert(xtask != NULL);
+    assert(xtask->tx_thread_id == TX_THREAD_ID);
 
-    if (tx_thread_resume((TX_THREAD*)task) != TX_SUCCESS)
-    {
-        return SMAC_RET_OS_TASK_ERR;
-    }
-
-    return SMAC_RET_OK;
+    return (tx_thread_resume(xtask) == TX_SUCCESS) ? SMAC_RET_OK : SMAC_RET_OS_TASK_ERR;
 }
 
 /// @brief  Create a new timer
@@ -1806,10 +1558,7 @@ smacRetCode_t smac_task_resume(smacTaskHandle_t task)
 /// @return Handle to the created timer, or NULL on failure
 smacTimerHandle_t smac_timer_create_once(const char* name, void (*callback)(void*), void* arg)
 {
-    if (callback == NULL)
-    {
-        return NULL;
-    }
+    assert(callback != NULL);
 
     TX_TIMER* timer = (TX_TIMER*)_mem_alloc(sizeof(TX_TIMER));
 
@@ -1833,12 +1582,10 @@ smacTimerHandle_t smac_timer_create_once(const char* name, void (*callback)(void
 /// @param name        Name of the timer
 /// @param callback    Pointer to the timer's callback function
 /// @param arg         Argument to be passed to the timer's callback function
+/// @return Handle to the created periodic timer, or NULL on failure
 smacTimerHandle_t smac_timer_create_periodic(const char* name, void (*callback)(void*), void* arg)
 {
-    if (callback == NULL)
-    {
-        return NULL;
-    }
+    assert(callback != NULL);
 
     TX_TIMER* timer = (TX_TIMER*)_mem_alloc(sizeof(TX_TIMER));
 
@@ -1874,24 +1621,14 @@ void smac_timer_delete(smacTimerHandle_t timer)
 /// @return Pointer to the timer's name string
 const char* smac_timer_name(smacTimerHandle_t timer)
 {
-    char* name = NULL;
+    char* name       = NULL;
+    TX_TIMER* xtimer = (TX_TIMER*)timer;
 
-    if (timer == NULL)
-    {
-        return NULL;
-    }
+    assert(xtimer != NULL);
+    assert(xtimer->tx_timer_id == TX_TIMER_ID);
 
-    if (((TX_TIMER*)timer)->tx_timer_id != TX_TIMER_ID)
-    {
-        return NULL;
-    }
-
-    if (tx_timer_info_get((TX_TIMER*)timer, (CHAR**)&name, NULL, NULL, NULL, NULL) != TX_SUCCESS)
-    {
-        return NULL;
-    }
-
-    return name;
+    return (tx_timer_info_get(xtimer, (CHAR**)&name, NULL, NULL, NULL, NULL) == TX_SUCCESS) ? name
+                                                                                            : NULL;
 }
 
 /// @brief  Get the current state of a timer
@@ -1900,28 +1637,17 @@ const char* smac_timer_name(smacTimerHandle_t timer)
 smacTimerState_t smac_timer_state(smacTimerHandle_t timer)
 {
     UINT active;
+    TX_TIMER* xtimer = (TX_TIMER*)timer;
 
-    if (timer == NULL)
+    assert(xtimer != NULL);
+    assert(xtimer->tx_timer_id == TX_TIMER_ID);
+
+    if (tx_timer_info_get(xtimer, NULL, &active, NULL, NULL, NULL) != TX_SUCCESS)
     {
         return SMAC_TIMER_STATE_UNKNOWN;
     }
 
-    if (((TX_TIMER*)timer)->tx_timer_id != TX_TIMER_ID)
-    {
-        return SMAC_TIMER_STATE_UNKNOWN;
-    }
-
-    if (tx_timer_info_get((TX_TIMER*)timer, NULL, &active, NULL, NULL, NULL) != TX_SUCCESS)
-    {
-        return SMAC_TIMER_STATE_UNKNOWN;
-    }
-
-    if (!active)
-    {
-        return SMAC_TIMER_STATE_IDLE;
-    }
-
-    return SMAC_TIMER_STATE_ACTIVE;
+    return (active) ? SMAC_TIMER_STATE_ACTIVE : SMAC_TIMER_STATE_IDLE;
 }
 
 /// @brief  Start a timer
@@ -1931,37 +1657,31 @@ smacTimerState_t smac_timer_state(smacTimerHandle_t timer)
 /// @return SMAC_RET_OK on success, error code otherwise
 smacRetCode_t smac_timer_start(smacTimerHandle_t timer, uint32_t timeout)
 {
-    if (timer == NULL)
-    {
-        return SMAC_RET_NULL_REF;
-    }
-
-    if (((TX_TIMER*)timer)->tx_timer_id != TX_TIMER_ID)
-    {
-        return SMAC_RET_PARAM_ERR;
-    }
-
     UINT active;
+    TX_TIMER* xtimer = (TX_TIMER*)timer;
 
-    if (tx_timer_info_get((TX_TIMER*)timer, NULL, &active, NULL, NULL, NULL) != TX_SUCCESS)
+    assert(xtimer != NULL);
+    assert(xtimer->tx_timer_id == TX_TIMER_ID);
+
+    if (tx_timer_info_get(xtimer, NULL, &active, NULL, NULL, NULL) != TX_SUCCESS)
     {
         return SMAC_RET_OS_TIMER_ERR;
     }
 
     if (active)
     {
-        if (tx_timer_deactivate((TX_TIMER*)timer) != TX_SUCCESS)
+        if (tx_timer_deactivate(xtimer) != TX_SUCCESS)
         {
             return SMAC_RET_OS_TIMER_ERR;
         }
     }
 
-    if (tx_timer_change((TX_TIMER*)timer, (ULONG)timeout, (ULONG)timeout) != TX_SUCCESS)
+    if (tx_timer_change(xtimer, (ULONG)timeout, (ULONG)timeout) != TX_SUCCESS)
     {
         return SMAC_RET_OS_TIMER_ERR;
     }
 
-    if (tx_timer_activate((TX_TIMER*)timer) != TX_SUCCESS)
+    if (tx_timer_activate(xtimer) != TX_SUCCESS)
     {
         return SMAC_RET_OS_TIMER_ERR;
     }
@@ -1975,15 +1695,16 @@ smacRetCode_t smac_timer_start(smacTimerHandle_t timer, uint32_t timeout)
 void smac_timer_stop(smacTimerHandle_t timer)
 {
     UINT active;
+    TX_TIMER* xtimer = (TX_TIMER*)timer;
 
-    if ((timer != NULL) && (((TX_TIMER*)timer)->tx_timer_id == TX_TIMER_ID))
+    assert(xtimer != NULL);
+    assert(xtimer->tx_timer_id == TX_TIMER_ID);
+
+    if (tx_timer_info_get(xtimer, NULL, &active, NULL, NULL, NULL) == TX_SUCCESS)
     {
-        if (tx_timer_info_get((TX_TIMER*)timer, NULL, &active, NULL, NULL, NULL) == TX_SUCCESS)
+        if (active)
         {
-            if (active)
-            {
-                tx_timer_deactivate((TX_TIMER*)timer);
-            }
+            tx_timer_deactivate(xtimer);
         }
     }
 }
