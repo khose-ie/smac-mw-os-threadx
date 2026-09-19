@@ -8,8 +8,8 @@
 /// @date    2024-06-10
 
 #include <assert.h>
-#include <smac-os.h>
-#include <smac-threadx.h>
+#include <smac/configuration/smac-threadx.h>
+#include <smac/middleware/smac-os.h>
 #include <stdlib.h>
 #include <tx_api.h>
 #include <tx_block_pool.h>

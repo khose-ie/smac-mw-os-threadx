@@ -1,9 +1,9 @@
 
 #include <assert.h>
 #include <fx_api.h>
-#include <smac-filex.h>
-#include <smac-media.h>
-#include <smac-os.h>
+#include <smac/configuration/smac-filex.h>
+#include <smac/middleware/smac-ms.h>
+#include <smac/middleware/smac-os.h>
 #include <tx_byte_pool.h>
 
 #ifdef __cplusplus
